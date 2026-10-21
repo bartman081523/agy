@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# AGY Full-Stack Launcher
+# Integrates all upgrades: Infrastructure, Epistemic Mandates, Symbolic Constructs, Socratic Dialog, and SymComp.
+# Every module is active by default (=1) and can be granularly disabled via environment variables.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+export AGY_INFRASTRUCTURE="${AGY_INFRASTRUCTURE:-1}"
+export AGY_EPISTEMIC="${AGY_EPISTEMIC:-1}"
+export AGY_SYMBOLIC="${AGY_SYMBOLIC:-1}"
+export AGY_SOCRATIC="${AGY_SOCRATIC:-1}"
+export AGY_SYMCOMP="${AGY_SYMCOMP:-1}"
+
+# Dynamic setup based on active modules
+python3 -c "
+import sys
+sys.path.insert(0, '${REPO_DIR}')
+rules_dir = '${REPO_DIR}/.agents/rules'
+
+if '${AGY_INFRASTRUCTURE}' == '1':
+    from agy_modules.infrastruktur import sync_mcp_servers
+    sync_mcp_servers()
+
+if '${AGY_EPISTEMIC}' == '1':
+    from agy_modules.epistemic import install_epistemic_rule
+    install_epistemic_rule(rules_dir)
+
+if '${AGY_SYMBOLIC}' == '1':
+    from agy_modules.symbolic import install_symbolic_rule
+    install_symbolic_rule(rules_dir)
+
+if '${AGY_SOCRATIC}' == '1':
+    from agy_modules.socratic import install_socratic_rule
+    install_socratic_rule(rules_dir)
+
+if '${AGY_SYMCOMP}' == '1':
+    from agy_modules.symcomp import install_symcomp_rule
+    install_symcomp_rule(rules_dir)
+" >/dev/null 2>&1 || true
+
+# Dry-run / Probe handler for test suites
+if [ "${1:-}" = "--dry-run" ] || [ "${1:-}" = "--probe" ]; then
+    echo "AGY-FULL: active=1 infra=${AGY_INFRASTRUCTURE} epistemic=${AGY_EPISTEMIC} symbolic=${AGY_SYMBOLIC} socratic=${AGY_SOCRATIC} symcomp=${AGY_SYMCOMP}"
+    exit 0
+fi
+
+BASE_AGY="${BASE_AGY:-/home/julian/.local/bin/agy}"
+if [ ! -x "${BASE_AGY}" ]; then
+    BASE_AGY="$(command -v agy || true)"
+fi
+
+if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
+    echo "Error: Base agy executable not found." >&2
+    exit 1
+fi
+
+exec "${BASE_AGY}" "$@"

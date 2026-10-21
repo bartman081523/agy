@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# AGY Modular Controller Launcher
+# Allows custom module combinations and variant inspection.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+export AGY_INFRASTRUCTURE="${AGY_INFRASTRUCTURE:-0}"
+export AGY_EPISTEMIC="${AGY_EPISTEMIC:-0}"
+export AGY_SYMBOLIC="${AGY_SYMBOLIC:-0}"
+export AGY_SOCRATIC="${AGY_SOCRATIC:-0}"
+export AGY_SYMCOMP="${AGY_SYMCOMP:-0}"
+
+if [ "${1:-}" = "--list-variants" ] || [ "${1:-}" = "-l" ]; then
+    echo "=== Available AGY Upgraded Launchers ==="
+    echo "  bin/agy-infrastruktur       : Context management, audio token protection, MCP sync"
+    echo "  bin/agy-epistemic           : SciMind 5.0 epistemic humility mandates & robustness"
+    echo "  bin/agy-symbolic            : ℧ cognito-construct notation & channel guards"
+    echo "  bin/agy-socratic            : Socratic Aporia, Platonic checks, Aristotelian critique"
+    echo "  bin/agy-symcomp             : Converged construct compaction & token saver"
+    echo "  bin/agy-symbolic-epistemic  : Combined Epistemic + Symbolic + Socratic suite"
+    echo "  bin/agy-full                : Full-Stack upgrade (all active by default)"
+    echo "  bin/agy-modular             : Custom combination via environment variables"
+    exit 0
+fi
+
+if [ "${1:-}" = "--status" ] || [ "${1:-}" = "--probe" ]; then
+    echo "AGY-MODULAR STATUS:"
+    echo "  AGY_INFRASTRUCTURE : ${AGY_INFRASTRUCTURE}"
+    echo "  AGY_EPISTEMIC      : ${AGY_EPISTEMIC}"
+    echo "  AGY_SYMBOLIC       : ${AGY_SYMBOLIC}"
+    echo "  AGY_SOCRATIC       : ${AGY_SOCRATIC}"
+    echo "  AGY_SYMCOMP        : ${AGY_SYMCOMP}"
+    exit 0
+fi
+
+# Run dynamic sync for active modules
+python3 -c "
+import sys
+sys.path.insert(0, '${REPO_DIR}')
+rules_dir = '${REPO_DIR}/.agents/rules'
+
+if '${AGY_INFRASTRUCTURE}' == '1':
+    from agy_modules.infrastruktur import sync_mcp_servers
+    sync_mcp_servers()
+
+if '${AGY_EPISTEMIC}' == '1':
+    from agy_modules.epistemic import install_epistemic_rule
+    install_epistemic_rule(rules_dir)
+
+if '${AGY_SYMBOLIC}' == '1':
+    from agy_modules.symbolic import install_symbolic_rule
+    install_symbolic_rule(rules_dir)
+
+if '${AGY_SOCRATIC}' == '1':
+    from agy_modules.socratic import install_socratic_rule
+    install_socratic_rule(rules_dir)
+
+if '${AGY_SYMCOMP}' == '1':
+    from agy_modules.symcomp import install_symcomp_rule
+    install_symcomp_rule(rules_dir)
+" >/dev/null 2>&1 || true
+
+BASE_AGY="${BASE_AGY:-/home/julian/.local/bin/agy}"
+if [ ! -x "${BASE_AGY}" ]; then
+    BASE_AGY="$(command -v agy || true)"
+fi
+
+if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
+    echo "Error: Base agy executable not found." >&2
+    exit 1
+fi
+
+exec "${BASE_AGY}" "$@"
