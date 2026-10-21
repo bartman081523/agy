@@ -9,14 +9,41 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 export AGY_INFRASTRUCTURE="${AGY_INFRASTRUCTURE:-1}"
 
+YOLO_ACTIVE=0
+if [ "${AGY_YOLO:-0}" = "1" ] || [ "${YOLO:-0}" = "1" ]; then
+    YOLO_ACTIVE=1
+fi
+
+PROCESSED_ARGS=()
+IS_PROBE=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --yolo|-y)
+            YOLO_ACTIVE=1
+            ;;
+        --dry-run|--probe)
+            IS_PROBE=1
+            PROCESSED_ARGS+=("$arg")
+            ;;
+        *)
+            PROCESSED_ARGS+=("$arg")
+            ;;
+    esac
+done
+
+if [ "$YOLO_ACTIVE" = "1" ]; then
+    PROCESSED_ARGS+=("--dangerously-skip-permissions")
+fi
+
 # Sync MCP configuration if infrastructure is active
 if [ "${AGY_INFRASTRUCTURE}" = "1" ]; then
     python3 "${REPO_DIR}/agy_modules/infrastruktur/mcp_sync.py" >/dev/null 2>&1 || true
 fi
 
 # Dry-run / Probe handler for test suites
-if [ "${1:-}" = "--dry-run" ] || [ "${1:-}" = "--probe" ]; then
-    echo "AGY-INFRASTRUCTURE: active=1 env=AGY_INFRASTRUCTURE=${AGY_INFRASTRUCTURE}"
+if [ "$IS_PROBE" = "1" ]; then
+    echo "AGY-INFRASTRUCTURE: active=1 env=AGY_INFRASTRUCTURE=${AGY_INFRASTRUCTURE} yolo=${YOLO_ACTIVE}"
     exit 0
 fi
 
@@ -30,4 +57,4 @@ if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
     exit 1
 fi
 
-exec "${BASE_AGY}" "$@"
+exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"

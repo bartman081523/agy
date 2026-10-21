@@ -2,6 +2,7 @@
 # AGY Full-Stack Launcher
 # Integrates all upgrades: Infrastructure, Epistemic Mandates, Symbolic Constructs, Socratic Dialog, and SymComp.
 # Every module is active by default (=1) and can be granularly disabled via environment variables.
+# Supports --yolo / -y (translates to --dangerously-skip-permissions).
 
 set -euo pipefail
 
@@ -13,6 +14,33 @@ export AGY_EPISTEMIC="${AGY_EPISTEMIC:-1}"
 export AGY_SYMBOLIC="${AGY_SYMBOLIC:-1}"
 export AGY_SOCRATIC="${AGY_SOCRATIC:-1}"
 export AGY_SYMCOMP="${AGY_SYMCOMP:-1}"
+
+YOLO_ACTIVE=0
+if [ "${AGY_YOLO:-0}" = "1" ] || [ "${YOLO:-0}" = "1" ]; then
+    YOLO_ACTIVE=1
+fi
+
+PROCESSED_ARGS=()
+IS_PROBE=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --yolo|-y)
+            YOLO_ACTIVE=1
+            ;;
+        --dry-run|--probe)
+            IS_PROBE=1
+            PROCESSED_ARGS+=("$arg")
+            ;;
+        *)
+            PROCESSED_ARGS+=("$arg")
+            ;;
+    esac
+done
+
+if [ "$YOLO_ACTIVE" = "1" ]; then
+    PROCESSED_ARGS+=("--dangerously-skip-permissions")
+fi
 
 # Dynamic setup based on active modules
 python3 -c "
@@ -42,8 +70,8 @@ if '${AGY_SYMCOMP}' == '1':
 " >/dev/null 2>&1 || true
 
 # Dry-run / Probe handler for test suites
-if [ "${1:-}" = "--dry-run" ] || [ "${1:-}" = "--probe" ]; then
-    echo "AGY-FULL: active=1 infra=${AGY_INFRASTRUCTURE} epistemic=${AGY_EPISTEMIC} symbolic=${AGY_SYMBOLIC} socratic=${AGY_SOCRATIC} symcomp=${AGY_SYMCOMP}"
+if [ "$IS_PROBE" = "1" ]; then
+    echo "AGY-FULL: active=1 infra=${AGY_INFRASTRUCTURE} epistemic=${AGY_EPISTEMIC} symbolic=${AGY_SYMBOLIC} socratic=${AGY_SOCRATIC} symcomp=${AGY_SYMCOMP} yolo=${YOLO_ACTIVE}"
     exit 0
 fi
 
@@ -57,4 +85,4 @@ if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
     exit 1
 fi
 
-exec "${BASE_AGY}" "$@"
+exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"

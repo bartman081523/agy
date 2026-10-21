@@ -9,14 +9,41 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 export AGY_SOCRATIC="${AGY_SOCRATIC:-1}"
 
+YOLO_ACTIVE=0
+if [ "${AGY_YOLO:-0}" = "1" ] || [ "${YOLO:-0}" = "1" ]; then
+    YOLO_ACTIVE=1
+fi
+
+PROCESSED_ARGS=()
+IS_PROBE=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --yolo|-y)
+            YOLO_ACTIVE=1
+            ;;
+        --dry-run|--probe)
+            IS_PROBE=1
+            PROCESSED_ARGS+=("$arg")
+            ;;
+        *)
+            PROCESSED_ARGS+=("$arg")
+            ;;
+    esac
+done
+
+if [ "$YOLO_ACTIVE" = "1" ]; then
+    PROCESSED_ARGS+=("--dangerously-skip-permissions")
+fi
+
 # Ensure socratic rule is generated if active
 if [ "${AGY_SOCRATIC}" = "1" ]; then
     python3 -c "import sys; sys.path.insert(0, '${REPO_DIR}'); from agy_modules.socratic import install_socratic_rule; install_socratic_rule('${REPO_DIR}/.agents/rules')" >/dev/null 2>&1 || true
 fi
 
 # Dry-run / Probe handler for test suites
-if [ "${1:-}" = "--dry-run" ] || [ "${1:-}" = "--probe" ]; then
-    echo "AGY-SOCRATIC: active=1 env=AGY_SOCRATIC=${AGY_SOCRATIC}"
+if [ "$IS_PROBE" = "1" ]; then
+    echo "AGY-SOCRATIC: active=1 env=AGY_SOCRATIC=${AGY_SOCRATIC} yolo=${YOLO_ACTIVE}"
     exit 0
 fi
 
@@ -30,4 +57,4 @@ if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
     exit 1
 fi
 
-exec "${BASE_AGY}" "$@"
+exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"

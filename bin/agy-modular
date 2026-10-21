@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AGY Modular Controller Launcher
-# Allows custom module combinations and variant inspection.
+# Allows custom module combinations, variant inspection, and --yolo support.
 
 set -euo pipefail
 
@@ -13,6 +13,33 @@ export AGY_SYMBOLIC="${AGY_SYMBOLIC:-0}"
 export AGY_SOCRATIC="${AGY_SOCRATIC:-0}"
 export AGY_SYMCOMP="${AGY_SYMCOMP:-0}"
 
+YOLO_ACTIVE=0
+if [ "${AGY_YOLO:-0}" = "1" ] || [ "${YOLO:-0}" = "1" ]; then
+    YOLO_ACTIVE=1
+fi
+
+PROCESSED_ARGS=()
+IS_PROBE=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --yolo|-y)
+            YOLO_ACTIVE=1
+            ;;
+        --dry-run|--probe)
+            IS_PROBE=1
+            PROCESSED_ARGS+=("$arg")
+            ;;
+        *)
+            PROCESSED_ARGS+=("$arg")
+            ;;
+    esac
+done
+
+if [ "$YOLO_ACTIVE" = "1" ]; then
+    PROCESSED_ARGS+=("--dangerously-skip-permissions")
+fi
+
 if [ "${1:-}" = "--list-variants" ] || [ "${1:-}" = "-l" ]; then
     echo "=== Available AGY Upgraded Launchers ==="
     echo "  bin/agy-infrastruktur       : Context management, audio token protection, MCP sync"
@@ -21,18 +48,19 @@ if [ "${1:-}" = "--list-variants" ] || [ "${1:-}" = "-l" ]; then
     echo "  bin/agy-socratic            : Socratic Aporia, Platonic checks, Aristotelian critique"
     echo "  bin/agy-symcomp             : Converged construct compaction & token saver"
     echo "  bin/agy-symbolic-epistemic  : Combined Epistemic + Symbolic + Socratic suite"
-    echo "  bin/agy-full                : Full-Stack upgrade (all active by default)"
-    echo "  bin/agy-modular             : Custom combination via environment variables"
+    echo "  bin/agy-full                : Full-Stack upgrade (all active by default, supports --yolo)"
+    echo "  bin/agy-modular             : Custom combination via environment variables (supports --yolo)"
     exit 0
 fi
 
-if [ "${1:-}" = "--status" ] || [ "${1:-}" = "--probe" ]; then
+if [ "${1:-}" = "--status" ] || [ "$IS_PROBE" = "1" ]; then
     echo "AGY-MODULAR STATUS:"
     echo "  AGY_INFRASTRUCTURE : ${AGY_INFRASTRUCTURE}"
     echo "  AGY_EPISTEMIC      : ${AGY_EPISTEMIC}"
     echo "  AGY_SYMBOLIC       : ${AGY_SYMBOLIC}"
     echo "  AGY_SOCRATIC       : ${AGY_SOCRATIC}"
     echo "  AGY_SYMCOMP        : ${AGY_SYMCOMP}"
+    echo "  YOLO_ACTIVE        : ${YOLO_ACTIVE}"
     exit 0
 fi
 
@@ -73,4 +101,4 @@ if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
     exit 1
 fi
 
-exec "${BASE_AGY}" "$@"
+exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
