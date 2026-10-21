@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "claude-history": {
+      "command": "/run/media/julian/ML4/gemini-cli/claude-history-mcp/run_server.sh"
+    },
+    "rea": {
+      "command": "node",
+      "args": [
+        "/run/media/julian/ML6/rea/scripts/rea.mjs",
+        "mcp"
+      ],
+      "env": {
+        "GHIDRA_INSTALL_DIR": "/run/media/julian/ML3/ghidra/ghidra_12.1.4_PUBLIC",
+        "JAVA_HOME": "/usr/lib/jvm/java-27-openjdk",
+        "REA_GHIDRA_STARTUP_TIMEOUT_MS": "600000"
+      }
+    }
+  }
+}
