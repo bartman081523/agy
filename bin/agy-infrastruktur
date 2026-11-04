@@ -4,8 +4,9 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+REPO_DIR="$(cd -P "${SCRIPT_DIR}/.." && pwd)"
+export PYTHONPATH="${REPO_DIR}:${PYTHONPATH:-}"
 
 export AGY_INFRASTRUCTURE="${AGY_INFRASTRUCTURE:-1}"
 
@@ -13,6 +14,14 @@ YOLO_ACTIVE=0
 if [ "${AGY_YOLO:-0}" = "1" ] || [ "${YOLO:-0}" = "1" ]; then
     YOLO_ACTIVE=1
 fi
+
+QUOTA_GUARD_ACTIVE=0
+if [ "${AGY_QUOTA_GUARD:-0}" = "1" ]; then
+    QUOTA_GUARD_ACTIVE=1
+fi
+
+QUOTA_ACCOUNTS=""
+QUOTA_ACCOUNTS_PENDING=0
 
 PROCESSED_ARGS=()
 IS_PROBE=0
@@ -22,15 +31,34 @@ for arg in "$@"; do
         --yolo|-y)
             YOLO_ACTIVE=1
             ;;
+        --quota-guard)
+            QUOTA_GUARD_ACTIVE=1
+            ;;
+        --quota-accounts)
+            QUOTA_ACCOUNTS_PENDING=1
+            ;;
+        --quota-accounts=*)
+            QUOTA_ACCOUNTS="${arg#*=}"
+            ;;
         --dry-run|--probe)
             IS_PROBE=1
             PROCESSED_ARGS+=("$arg")
             ;;
         *)
-            PROCESSED_ARGS+=("$arg")
+            if [ "$QUOTA_ACCOUNTS_PENDING" = "1" ]; then
+                QUOTA_ACCOUNTS="${arg}"
+                QUOTA_ACCOUNTS_PENDING=0
+            else
+                PROCESSED_ARGS+=("$arg")
+            fi
             ;;
     esac
 done
+
+# Account failover only makes sense with the quota guard
+if [ -n "${QUOTA_ACCOUNTS}" ]; then
+    QUOTA_GUARD_ACTIVE=1
+fi
 
 if [ "$YOLO_ACTIVE" = "1" ]; then
     PROCESSED_ARGS+=("--dangerously-skip-permissions")
@@ -43,7 +71,7 @@ fi
 
 # Dry-run / Probe handler for test suites
 if [ "$IS_PROBE" = "1" ]; then
-    echo "AGY-INFRASTRUCTURE: active=1 env=AGY_INFRASTRUCTURE=${AGY_INFRASTRUCTURE} yolo=${YOLO_ACTIVE}"
+    echo "AGY-INFRASTRUCTURE: active=1 env=AGY_INFRASTRUCTURE=${AGY_INFRASTRUCTURE} yolo=${YOLO_ACTIVE} quota_guard=${QUOTA_GUARD_ACTIVE} accounts=${QUOTA_ACCOUNTS}"
     exit 0
 fi
 
@@ -57,4 +85,12 @@ if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
     exit 1
 fi
 
-exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+if [ "$QUOTA_GUARD_ACTIVE" = "1" ]; then
+    if [ -n "${QUOTA_ACCOUNTS}" ]; then
+        exec python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" "--quota-accounts=${QUOTA_ACCOUNTS}" "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+    else
+        exec python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+    fi
+else
+    exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+fi

@@ -4,8 +4,9 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+REPO_DIR="$(cd -P "${SCRIPT_DIR}/.." && pwd)"
+export PYTHONPATH="${REPO_DIR}:${PYTHONPATH:-}"
 
 export AGY_INFRASTRUCTURE="${AGY_INFRASTRUCTURE:-0}"
 export AGY_EPISTEMIC="${AGY_EPISTEMIC:-0}"
@@ -18,6 +19,14 @@ if [ "${AGY_YOLO:-0}" = "1" ] || [ "${YOLO:-0}" = "1" ]; then
     YOLO_ACTIVE=1
 fi
 
+QUOTA_GUARD_ACTIVE=0
+if [ "${AGY_QUOTA_GUARD:-0}" = "1" ]; then
+    QUOTA_GUARD_ACTIVE=1
+fi
+
+QUOTA_ACCOUNTS=""
+QUOTA_ACCOUNTS_PENDING=0
+
 PROCESSED_ARGS=()
 IS_PROBE=0
 
@@ -26,15 +35,34 @@ for arg in "$@"; do
         --yolo|-y)
             YOLO_ACTIVE=1
             ;;
+        --quota-guard)
+            QUOTA_GUARD_ACTIVE=1
+            ;;
+        --quota-accounts)
+            QUOTA_ACCOUNTS_PENDING=1
+            ;;
+        --quota-accounts=*)
+            QUOTA_ACCOUNTS="${arg#*=}"
+            ;;
         --dry-run|--probe)
             IS_PROBE=1
             PROCESSED_ARGS+=("$arg")
             ;;
         *)
-            PROCESSED_ARGS+=("$arg")
+            if [ "$QUOTA_ACCOUNTS_PENDING" = "1" ]; then
+                QUOTA_ACCOUNTS="${arg}"
+                QUOTA_ACCOUNTS_PENDING=0
+            else
+                PROCESSED_ARGS+=("$arg")
+            fi
             ;;
     esac
 done
+
+# Account failover only makes sense with the quota guard
+if [ -n "${QUOTA_ACCOUNTS}" ]; then
+    QUOTA_GUARD_ACTIVE=1
+fi
 
 if [ "$YOLO_ACTIVE" = "1" ]; then
     PROCESSED_ARGS+=("--dangerously-skip-permissions")
@@ -61,34 +89,43 @@ if [ "${1:-}" = "--status" ] || [ "$IS_PROBE" = "1" ]; then
     echo "  AGY_SOCRATIC       : ${AGY_SOCRATIC}"
     echo "  AGY_SYMCOMP        : ${AGY_SYMCOMP}"
     echo "  YOLO_ACTIVE        : ${YOLO_ACTIVE}"
+    echo "  QUOTA_GUARD        : ${QUOTA_GUARD_ACTIVE}"
+    echo "  QUOTA_ACCOUNTS     : ${QUOTA_ACCOUNTS}"
     exit 0
 fi
 
-# Run dynamic sync for active modules
+# Multi-target synchronization (local repo, current working directory, and global config)
 python3 -c "
-import sys
+import os, sys
 sys.path.insert(0, '${REPO_DIR}')
-rules_dir = '${REPO_DIR}/.agents/rules'
+
+repo_dir = '${REPO_DIR}'
+cwd = os.getcwd()
+home = os.path.expanduser('~')
+global_rules = os.path.join(home, '.gemini/config/rules')
+
+targets = [os.path.join(repo_dir, '.agents/rules'), global_rules]
+if os.path.exists(os.path.join(cwd, '.git')) or os.path.exists(os.path.join(cwd, '.agents')):
+    targets.append(os.path.join(cwd, '.agents/rules'))
 
 if '${AGY_INFRASTRUCTURE}' == '1':
     from agy_modules.infrastruktur import sync_mcp_servers
     sync_mcp_servers()
 
-if '${AGY_EPISTEMIC}' == '1':
-    from agy_modules.epistemic import install_epistemic_rule
-    install_epistemic_rule(rules_dir)
-
-if '${AGY_SYMBOLIC}' == '1':
-    from agy_modules.symbolic import install_symbolic_rule
-    install_symbolic_rule(rules_dir)
-
-if '${AGY_SOCRATIC}' == '1':
-    from agy_modules.socratic import install_socratic_rule
-    install_socratic_rule(rules_dir)
-
-if '${AGY_SYMCOMP}' == '1':
-    from agy_modules.symcomp import install_symcomp_rule
-    install_symcomp_rule(rules_dir)
+for t in set(targets):
+    os.makedirs(t, exist_ok=True)
+    if '${AGY_EPISTEMIC}' == '1':
+        from agy_modules.epistemic import install_epistemic_rule
+        install_epistemic_rule(t)
+    if '${AGY_SYMBOLIC}' == '1':
+        from agy_modules.symbolic import install_symbolic_rule
+        install_symbolic_rule(t)
+    if '${AGY_SOCRATIC}' == '1':
+        from agy_modules.socratic import install_socratic_rule
+        install_socratic_rule(t)
+    if '${AGY_SYMCOMP}' == '1':
+        from agy_modules.symcomp import install_symcomp_rule
+        install_symcomp_rule(t)
 " >/dev/null 2>&1 || true
 
 BASE_AGY="${BASE_AGY:-/home/julian/.local/bin/agy}"
@@ -101,4 +138,12 @@ if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
     exit 1
 fi
 
-exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+if [ "$QUOTA_GUARD_ACTIVE" = "1" ]; then
+    if [ -n "${QUOTA_ACCOUNTS}" ]; then
+        exec python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" "--quota-accounts=${QUOTA_ACCOUNTS}" "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+    else
+        exec python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+    fi
+else
+    exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+fi

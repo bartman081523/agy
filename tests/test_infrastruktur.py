@@ -5,6 +5,7 @@ import subprocess
 from agy_modules.infrastruktur.context_manager import ContextManager
 from agy_modules.infrastruktur.audio_token_guard import AudioTokenGuard
 from agy_modules.infrastruktur.mcp_sync import sync_mcp_servers
+from agy_modules.infrastruktur.quota_guard import QuotaGuard, parse_reset_duration
 
 class TestInfrastrukturModule(unittest.TestCase):
 
@@ -27,6 +28,12 @@ class TestInfrastrukturModule(unittest.TestCase):
         cm = ContextManager("/non/existent/history.db")
         sessions = cm.list_recent_sessions(limit=5)
         self.assertEqual(sessions, [])
+
+    def test_quota_guard_export(self):
+        dur = parse_reset_duration("RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 15m30s.")
+        self.assertEqual(dur, 930.0)
+        guard = QuotaGuard()
+        self.assertEqual(guard.buffer_seconds, 3.0)
 
     def test_launcher_probe(self):
         repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
