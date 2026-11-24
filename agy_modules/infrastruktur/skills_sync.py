@@ -8,7 +8,10 @@ import sys
 import json
 import re
 from typing import Dict, Any, Tuple, Optional
-import yaml
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 DEFAULT_CLAUDE_SKILLS = os.path.expanduser("~/.claude/skills")
 DEFAULT_GEMINI_CONFIG = os.path.expanduser("~/.gemini/config")
