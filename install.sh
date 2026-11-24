@@ -144,7 +144,7 @@ else
             TMP_TAR="$(mktemp --suffix=.tar.gz)"
             if curl -fsSL -o "${TMP_TAR}" "${DOWNLOAD_URL}"; then
                 echo "    Extracting release bundle..."
-                tar -xzf "${TMP_TAR}" -C "${INSTALL_DIR}" --strip-components=1 2>/dev/null || tar -xzf "${TMP_TAR}" -C "${INSTALL_DIR}"
+                tar -xzf "${TMP_TAR}" -C "${INSTALL_DIR}"
                 rm -f "${TMP_TAR}"
                 INSTALLED_FROM_RELEASE=1
                 echo "    ✓ Extracted release bundle into ${INSTALL_DIR}"
