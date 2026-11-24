@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for the release (e.g. v1.5.0)'
+        required: true
+        default: 'v1.5.0'
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release Bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Make scripts executable
+        run: |
+          chmod +x bin/* install.sh tests/run_all_tests.sh
+
+      - name: Run verification test suite
+        run: |
+          ./tests/run_all_tests.sh
+
+      - name: Determine tag name
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            echo "TAG=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release bundle
+        run: |
+          TAG="${{ steps.tag.outputs.TAG }}"
+          echo "Packaging AGY Mod release for $TAG ..."
+          mkdir -p dist
+          tar -czf "dist/agy-release.tar.gz" \
+            bin/ \
+            agy_modules/ \
+            antigravity-history-mcp/ \
+            install.sh \
+            VERSION \
+            README.md \
+            README_UPGRADES.md \
+            CHANGELOG.md
+
+          cd dist
+          sha256sum agy-release.tar.gz > agy-release.tar.gz.sha256
+          cp agy-release.tar.gz "agy-${TAG}-linux-x86_64.tar.gz"
+          sha256sum "agy-${TAG}-linux-x86_64.tar.gz" > "agy-${TAG}-linux-x86_64.tar.gz.sha256"
+          cd ..
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG }}
+          name: AGY Mod ${{ steps.tag.outputs.TAG }}
+          files: |
+            dist/agy-release.tar.gz
+            dist/agy-release.tar.gz.sha256
+            dist/agy-${{ steps.tag.outputs.TAG }}-linux-x86_64.tar.gz
+            dist/agy-${{ steps.tag.outputs.TAG }}-linux-x86_64.tar.gz.sha256
+          generate_release_notes: true
+          draft: false
+          prerelease: false

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# AGY Symbolic Launcher
+# Activates ℧ Cognito-Construct Notation and Channel Guards.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+REPO_DIR="$(cd -P "${SCRIPT_DIR}/.." && pwd)"
+export PYTHONPATH="${REPO_DIR}:${PYTHONPATH:-}"
+
+export AGY_SYMBOLIC="${AGY_SYMBOLIC:-1}"
+
+YOLO_ACTIVE=0
+if [ "${AGY_YOLO:-0}" = "1" ] || [ "${YOLO:-0}" = "1" ]; then
+    YOLO_ACTIVE=1
+fi
+
+PROCESSED_ARGS=()
+IS_PROBE=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --yolo|-y)
+            YOLO_ACTIVE=1
+            ;;
+        --dry-run|--probe)
+            IS_PROBE=1
+            PROCESSED_ARGS+=("$arg")
+            ;;
+        *)
+            PROCESSED_ARGS+=("$arg")
+            ;;
+    esac
+done
+
+if [ "$YOLO_ACTIVE" = "1" ]; then
+    PROCESSED_ARGS+=("--dangerously-skip-permissions")
+fi
+
+# Ensure symbolic rule is generated if active
+if [ "${AGY_SYMBOLIC}" = "1" ]; then
+    python3 -c "import sys; sys.path.insert(0, '${REPO_DIR}'); from agy_modules.symbolic import install_symbolic_rule; install_symbolic_rule('${REPO_DIR}/.agents/rules')" >/dev/null 2>&1 || true
+fi
+
+# Dry-run / Probe handler for test suites
+if [ "$IS_PROBE" = "1" ]; then
+    echo "AGY-SYMBOLIC: active=1 env=AGY_SYMBOLIC=${AGY_SYMBOLIC} yolo=${YOLO_ACTIVE}"
+    exit 0
+fi
+
+BASE_AGY="${BASE_AGY:-${HOME}/.local/bin/agy}"
+if [ ! -x "${BASE_AGY}" ]; then
+    BASE_AGY="$(command -v agy || true)"
+fi
+
+if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
+    echo "Error: Base agy executable not found." >&2
+    exit 1
+fi
+
+exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"

@@ -1,0 +1,387 @@
+#!/usr/bin/env bash
+# AGY Full-Stack Launcher
+# Integrates all upgrades: Infrastructure, Epistemic Mandates, Symbolic Constructs, Socratic Dialog, and SymComp.
+# Every module is active by default (=1) and can be granularly configured or disabled via flags or environment variables.
+# Supports --yolo / -y (translates to --dangerously-skip-permissions).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+REPO_DIR="$(cd -P "${SCRIPT_DIR}/.." && pwd)"
+export PYTHONPATH="${REPO_DIR}:${PYTHONPATH:-}"
+
+EXEC_NAME="$(basename "$0")"
+if [ "$EXEC_NAME" = "login" ] || [ "$EXEC_NAME" = "agy-login" ]; then
+    python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --login
+    exit 0
+fi
+
+if [ "$EXEC_NAME" = "update" ] || [ "$EXEC_NAME" = "agy-update" ] || [ "${1:-}" = "update" ] || [ "${1:-}" = "self-update" ] || [ "${1:-}" = "--self-update" ] || [ "${1:-}" = "--update" ]; then
+    shift 1 2>/dev/null || true
+    python3 "${REPO_DIR}/agy_modules/infrastruktur/updater.py" "$@"
+    exit 0
+fi
+
+export AGY_INFRASTRUCTURE="${AGY_INFRASTRUCTURE:-1}"
+export AGY_EPISTEMIC="${AGY_EPISTEMIC:-1}"
+export AGY_SYMBOLIC="${AGY_SYMBOLIC:-1}"
+export AGY_SOCRATIC="${AGY_SOCRATIC:-1}"
+export AGY_SYMCOMP="${AGY_SYMCOMP:-1}"
+
+YOLO_ACTIVE=0
+if [ "${AGY_YOLO:-0}" = "1" ] || [ "${YOLO:-0}" = "1" ]; then
+    YOLO_ACTIVE=1
+fi
+
+QUOTA_GUARD_ACTIVE=1
+if [ "${AGY_NO_QUOTA_GUARD:-0}" = "1" ] || [ "${NO_QUOTA_GUARD:-0}" = "1" ] || [ "${AGY_QUOTA_GUARD:-1}" = "0" ]; then
+    QUOTA_GUARD_ACTIVE=0
+fi
+
+TUI_STATUS_ACTIVE=1
+if [ "${AGY_NO_TUI_STATUS:-0}" = "1" ] || [ "${AGY_TUI_STATUS:-1}" = "0" ] || [ "${AGY_STATUSBAR:-1}" = "0" ]; then
+    TUI_STATUS_ACTIVE=0
+fi
+
+QUOTA_ACCOUNTS=""
+PROCESSED_ARGS=()
+IS_PROBE=0
+
+show_help() {
+    cat << 'EOF'
+AGY Full-Stack Launcher (Universal Agentic AI Suite)
+
+Usage:
+  agy-full [OPTIONS] [AGY_OPTIONS...]
+
+Module Controls:
+  --epistemic, --no-epistemic         SciMind 5.0 epistemic humility mandates & robustness (default: on)
+  --symbolic, --no-symbolic           ℧ cognito-construct notation & channel guards (default: on)
+  --socratic, --no-socratic           Socratic Aporia, Platonic checks, Aristotelian critique (default: on)
+  --symcomp, --no-symcomp             Converged construct compaction & token saver (default: on)
+  --infra, --no-infra                 Context management, audio token protection, MCP sync (default: on)
+
+Quota Guard & Multi-Account:
+  --quota-guard, --no-quota-guard     Auto-wait & resume on Gemini 429 quota exhaustion (default: off)
+  --quota-accounts <spec>             Account pool specification (comma-separated, file, or JSON)
+  --tui-status, --status-bar          Live bottom status bar (Account, Quota %, Context fill)
+  --no-tui-status, --no-status-bar    Disable live TUI bottom status bar
+  --reset-quota, --clear-quota        Reset persisted quota cooldowns and anchors
+  --quota-ledger [limit]              Show continuous audit ledger of quotas & cooldowns
+  --audit-quota                       Record immediate quota snapshot to ledger
+  --compact-conversation <id>         Compact a large session database to prevent timeouts
+
+Account & Provider Management (/login):
+  --login, /login, login              Interactive menu to manage unlimited accounts and providers
+  --oauth-login                       Upstream Google OAuth 2.0 browser sign-in flow
+  --import-keyring                    Import active Google OAuth account from Linux secret-service
+  --switch-account <index>            Switch active account slot and sync keyring
+  --list-accounts                     List all configured account slots and remaining quotas
+  --add-account <spec>                Add account (format: name:provider:key[:model[:base_url]])
+  --delete-account <index>            Delete account slot by index (1-based or 0-based)
+  --provider <name>                   Set provider (google, anthropic, openai, deepseek, ollama, openrouter, custom)
+  --model <name>                      Set target model for provider
+  --install-statusline                Install native statusLine permanently into ~/.gemini/antigravity-cli/settings.json
+  --uninstall-statusline              Remove native statusLine from settings.json
+  --repair-conversations              Repair zero-timestamps in SQLite index so /resume and --continue work reliably
+
+Context Autocompression:
+  --compress <size>                   Context autocompaction trigger (e.g. 128k, 64k, 256k, 1M, 50000)
+
+Execution Modes:
+  --yolo, -y                          Dangerously skip interactive permissions
+  --probe, --dry-run                  Probe module configuration without launching
+  --help, -h                          Show this help message
+
+Examples:
+  agy-full --epistemic --symbolic --symcomp --tui-status --yolo
+  agy-full --compress 128k --tui-status
+  agy-full --login
+  agy-full --list-accounts
+  agy-full --add-account "Claude-Dev:anthropic:sk-ant-xxx:claude-3-7-sonnet-20250219"
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        --epistemic)
+            export AGY_EPISTEMIC=1
+            shift
+            ;;
+        --no-epistemic)
+            export AGY_EPISTEMIC=0
+            shift
+            ;;
+        --symbolic)
+            export AGY_SYMBOLIC=1
+            shift
+            ;;
+        --no-symbolic)
+            export AGY_SYMBOLIC=0
+            shift
+            ;;
+        --socratic)
+            export AGY_SOCRATIC=1
+            shift
+            ;;
+        --no-socratic)
+            export AGY_SOCRATIC=0
+            shift
+            ;;
+        --symcomp)
+            export AGY_SYMCOMP=1
+            shift
+            ;;
+        --no-symcomp)
+            export AGY_SYMCOMP=0
+            shift
+            ;;
+        --infra|--infrastructure)
+            export AGY_INFRASTRUCTURE=1
+            shift
+            ;;
+        --no-infra|--no-infrastructure)
+            export AGY_INFRASTRUCTURE=0
+            shift
+            ;;
+        --yolo|-y)
+            YOLO_ACTIVE=1
+            shift
+            ;;
+        --quota-guard)
+            QUOTA_GUARD_ACTIVE=1
+            shift
+            ;;
+        --no-quota-guard)
+            QUOTA_GUARD_ACTIVE=0
+            shift
+            ;;
+        --tui-status|--status-bar)
+            TUI_STATUS_ACTIVE=1
+            QUOTA_GUARD_ACTIVE=1
+            shift
+            ;;
+        --no-tui-status|--no-status-bar)
+            TUI_STATUS_ACTIVE=0
+            shift
+            ;;
+        --reset-quota|--clear-quota)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --reset-quota
+            exit 0
+            ;;
+        --audit-quota)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --audit-quota
+            exit 0
+            ;;
+        --quota-ledger)
+            limit_val="${2:-20}"
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --quota-ledger "$limit_val"
+            exit 0
+            ;;
+        --quota-ledger=*)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --quota-ledger "${1#*=}"
+            exit 0
+            ;;
+        --compact-conversation)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --compact-conversation "$2"
+            exit 0
+            ;;
+        --compact-conversation=*)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --compact-conversation "${1#*=}"
+            exit 0
+            ;;
+        --login|/login|login|--accounts-menu)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --login
+            exit 0
+            ;;
+        --list-accounts)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --list-accounts
+            exit 0
+            ;;
+        --oauth-login)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --oauth-login
+            exit 0
+            ;;
+        --import-keyring)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --import-keyring
+            exit 0
+            ;;
+        --switch-account)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --switch-account "$2"
+            exit 0
+            ;;
+        --switch-account=*)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --switch-account "${1#*=}"
+            exit 0
+            ;;
+        --add-account)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --add-account "$2"
+            exit 0
+            ;;
+        --add-account=*)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --add-account "${1#*=}"
+            exit 0
+            ;;
+        --delete-account)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --delete-account "$2"
+            exit 0
+            ;;
+        --delete-account=*)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --delete-account "${1#*=}"
+            exit 0
+            ;;
+        --install-statusline|--setup-statusline)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --install-statusline
+            exit 0
+            ;;
+        --uninstall-statusline|--remove-statusline)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --uninstall-statusline
+            exit 0
+            ;;
+        --repair-conversations|--sync-conversations)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --repair-conversations
+            exit 0
+            ;;
+        --compress)
+            export AGY_COMPRESS="$2"
+            export AGY_COMPRESS_TOKENS="$(python3 -c "from agy_modules.infrastruktur.quota_guard import parse_token_size; print(parse_token_size('$2'))")"
+            shift 2
+            ;;
+        --compress=*)
+            c_val="${1#*=}"
+            export AGY_COMPRESS="$c_val"
+            export AGY_COMPRESS_TOKENS="$(python3 -c "from agy_modules.infrastruktur.quota_guard import parse_token_size; print(parse_token_size('$c_val'))")"
+            shift
+            ;;
+        --provider)
+            export AGY_PROVIDER="$2"
+            shift 2
+            ;;
+        --provider=*)
+            export AGY_PROVIDER="${1#*=}"
+            shift
+            ;;
+        --model)
+            export AGY_MODEL="$2"
+            export MODEL="$2"
+            PROCESSED_ARGS+=("--model" "$2")
+            shift 2
+            ;;
+        --model=*)
+            m_val="${1#*=}"
+            export AGY_MODEL="$m_val"
+            export MODEL="$m_val"
+            PROCESSED_ARGS+=("--model" "$m_val")
+            shift
+            ;;
+        --quota-accounts|--accounts)
+            QUOTA_ACCOUNTS="$2"
+            shift 2
+            ;;
+        --quota-accounts=*|--accounts=*)
+            QUOTA_ACCOUNTS="${1#*=}"
+            shift
+            ;;
+        --dry-run|--probe)
+            IS_PROBE=1
+            PROCESSED_ARGS+=("$1")
+            shift
+            ;;
+        *)
+            PROCESSED_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Account pool requires quota guard
+if [ -n "${QUOTA_ACCOUNTS}" ]; then
+    QUOTA_GUARD_ACTIVE=1
+fi
+
+if [ "$YOLO_ACTIVE" = "1" ]; then
+    PROCESSED_ARGS+=("--dangerously-skip-permissions")
+fi
+
+# Multi-target synchronization (local repo, current working directory, and global config)
+python3 -c "
+import os, sys
+sys.path.insert(0, '${REPO_DIR}')
+
+repo_dir = '${REPO_DIR}'
+cwd = os.getcwd()
+home = os.path.expanduser('~')
+global_rules = os.path.join(home, '.gemini/config/rules')
+
+targets = [os.path.join(repo_dir, '.agents/rules'), global_rules]
+if os.path.exists(os.path.join(cwd, '.git')) or os.path.exists(os.path.join(cwd, '.agents')):
+    targets.append(os.path.join(cwd, '.agents/rules'))
+
+if '${AGY_INFRASTRUCTURE}' == '1':
+    from agy_modules.infrastruktur import sync_mcp_servers, sync_claude_skills
+    sync_mcp_servers()
+    sync_claude_skills(workspace_dir=cwd)
+
+for t in set(targets):
+    os.makedirs(t, exist_ok=True)
+    if '${AGY_EPISTEMIC}' == '1':
+        from agy_modules.epistemic import install_epistemic_rule
+        install_epistemic_rule(t)
+    if '${AGY_SYMBOLIC}' == '1':
+        from agy_modules.symbolic import install_symbolic_rule
+        install_symbolic_rule(t)
+    if '${AGY_SOCRATIC}' == '1':
+        from agy_modules.socratic import install_socratic_rule
+        install_socratic_rule(t)
+    if '${AGY_SYMCOMP}' == '1':
+        from agy_modules.symcomp import install_symcomp_rule
+        install_symcomp_rule(t)
+" >/dev/null 2>&1 || true
+
+# Dry-run / Probe handler for test suites
+if [ "$IS_PROBE" = "1" ]; then
+    echo "AGY-FULL: active=1 infra=${AGY_INFRASTRUCTURE} epistemic=${AGY_EPISTEMIC} symbolic=${AGY_SYMBOLIC} socratic=${AGY_SOCRATIC} symcomp=${AGY_SYMCOMP} yolo=${YOLO_ACTIVE} quota_guard=${QUOTA_GUARD_ACTIVE} accounts=${QUOTA_ACCOUNTS} tui_status=${TUI_STATUS_ACTIVE}"
+    exit 0
+fi
+
+BASE_AGY="${BASE_AGY:-${HOME}/.local/bin/agy}"
+if [ ! -x "${BASE_AGY}" ]; then
+    BASE_AGY="$(command -v agy || true)"
+fi
+
+if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
+    echo "Error: Base agy executable not found." >&2
+    exit 1
+fi
+
+# Synchronize active account credentials to keyring and environment
+eval "$(python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --sync-active-account --export-env 2>/dev/null || true)"
+
+if [ "$QUOTA_GUARD_ACTIVE" = "1" ]; then
+    GUARD_ARGS=()
+    if [ -n "${QUOTA_ACCOUNTS}" ]; then
+        GUARD_ARGS+=("--quota-accounts=${QUOTA_ACCOUNTS}")
+    fi
+    if [ "$TUI_STATUS_ACTIVE" = "1" ]; then
+        GUARD_ARGS+=("--tui-status")
+    else
+        GUARD_ARGS+=("--no-tui-status")
+    fi
+    if [ -n "${AGY_COMPRESS:-}" ]; then
+        GUARD_ARGS+=("--compress=${AGY_COMPRESS}")
+    fi
+    exec python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" "${GUARD_ARGS[@]}" "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+else
+    RESOLVED_ARGS=($(python3 -c "import sys; from agy_modules.infrastruktur.quota_guard import resolve_cli_continue_args; print(' '.join(resolve_cli_continue_args(sys.argv[1:])))" "${PROCESSED_ARGS[@]}" 2>/dev/null || echo "${PROCESSED_ARGS[@]}"))
+    if [ "$TUI_STATUS_ACTIVE" = "1" ]; then
+        STATUS_SCRIPT="${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py"
+        STATUS_JSON="{\"statusLine\": {\"command\": \"python3 ${STATUS_SCRIPT} --statusline-cmd\", \"stack_with_default\": true}}"
+        exec "${BASE_AGY}" --settings "${STATUS_JSON}" "${RESOLVED_ARGS[@]}"
+    else
+        exec "${BASE_AGY}" "${RESOLVED_ARGS[@]}"
+    fi
+fi
