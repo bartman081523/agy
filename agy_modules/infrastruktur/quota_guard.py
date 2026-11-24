@@ -507,9 +507,11 @@ GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET = get_upstream_oauth_credenti
 GOOGLE_OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
+    "openid",
     "https://www.googleapis.com/auth/cloud-platform",
     "https://www.googleapis.com/auth/cclog",
     "https://www.googleapis.com/auth/experimentsandconfigs",
+    "https://www.googleapis.com/auth/aicode",
 ]
 GOOGLE_OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -1519,6 +1521,14 @@ class MultiAccountManager:
         idx = self.get_active_account_index()
         if 0 <= idx < len(self.accounts):
             acc = self.accounts[idx]
+            # Verify active account is valid and licensed; auto-switch if unlicensed
+            if acc.is_oauth():
+                rt = acc.fetch_realtime_quota()
+                if rt and not rt.get("is_licensed", True):
+                    best_idx, _, _ = self.select_best_account(exclude_index=idx)
+                    if best_idx != idx and 0 <= best_idx < len(self.accounts):
+                        self.set_active_account(best_idx)
+                        acc = self.accounts[best_idx]
             if acc.is_oauth():
                 acc.ensure_fresh_token()
                 if acc.oauth_data:
@@ -1553,6 +1563,11 @@ class MultiAccountManager:
                 for acc in self.accounts:
                     acc_email = str(acc.oauth_data.get("id_token_email") or acc.name).strip().lower()
                     if acc_email == keyring_email or acc.name.strip().lower() == keyring_email:
+                        # Verify this account is licensed before adopting it as active
+                        if acc.is_oauth():
+                            rt = acc.fetch_realtime_quota()
+                            if rt and not rt.get("is_licensed", True):
+                                break
                         self._persist_active_index_if_changed(acc.index)
                         return acc.index
 
