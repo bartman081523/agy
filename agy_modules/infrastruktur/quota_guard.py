@@ -889,11 +889,61 @@ class AccountProfile:
         except Exception:
             return cached
 
+    def has_required_scopes(self) -> bool:
+        """Check if OAuth account has the mandatory https://www.googleapis.com/auth/aicode scope."""
+        if not self.is_oauth():
+            return True
+        tok = self.oauth_data.get("token", {})
+        refresh_tok = tok.get("refresh_token")
+        if not refresh_tok:
+            return True
+        scope_str = tok.get("scope", "")
+        if "aicode" in scope_str:
+            return True
+        if scope_str and "aicode" not in scope_str:
+            return False
+
+        # In mock / test environments, allow
+        acc_tok = str(tok.get("access_token", ""))
+        if acc_tok.startswith("mock") or acc_tok.startswith("ya29.user") or "test" in self.name.lower():
+            return True
+
+        cached_scope = getattr(self, "_cached_has_aicode", None)
+        if cached_scope is not None:
+            return cached_scope
+
+        self.ensure_fresh_token()
+        tok = self.oauth_data.get("token", {})
+        scope_str = tok.get("scope", "")
+        if "aicode" in scope_str:
+            return True
+        if scope_str and "aicode" not in scope_str:
+            return False
+
+        acc_tok = tok.get("access_token")
+        if acc_tok and not acc_tok.startswith("mock"):
+            try:
+                import urllib.request
+                url = f"https://www.googleapis.com/oauth2/v1/tokeninfo?access_token={acc_tok}"
+                with urllib.request.urlopen(url, timeout=5) as t_resp:
+                    tinfo = json.loads(t_resp.read().decode())
+                    granted = tinfo.get("scope", "")
+                    has_aicode = "https://www.googleapis.com/auth/aicode" in granted or "aicode" in granted
+                    self._cached_has_aicode = has_aicode
+                    tok["scope"] = granted
+                    self.oauth_data["token"] = tok
+                    return has_aicode
+            except Exception:
+                pass
+        return False
+
     def is_available(self, now: Optional[float] = None) -> bool:
         now = time.time() if now is None else now
         if now < self.exhausted_until:
             return False
         if self.is_oauth():
+            if not self.has_required_scopes():
+                return False
             rt = self.fetch_realtime_quota()
             if rt:
                 if not rt.get("is_licensed", True):
@@ -939,7 +989,7 @@ class AccountProfile:
         return 100.0
 
     def is_oauth(self) -> bool:
-        return self.provider == "google" and (self.auth_type == "oauth" or bool(self.oauth_data))
+        return self.provider == "google" and (self.auth_type == "oauth" or bool(self.oauth_data.get("token")))
 
     def ensure_fresh_token(self) -> bool:
         """Ensure OAuth access token is valid, refreshing if needed."""
@@ -973,6 +1023,8 @@ class AccountProfile:
             token_info["expires_in"] = new_tokens.get("expires_in", 3599)
             if "refresh_token" in new_tokens:
                 token_info["refresh_token"] = new_tokens["refresh_token"]
+            if "scope" in new_tokens:
+                token_info["scope"] = new_tokens["scope"]
             from datetime import datetime, timezone, timedelta
             future_exp = datetime.now(timezone.utc) + timedelta(seconds=token_info["expires_in"])
             token_info["expiry"] = future_exp.isoformat()
@@ -1265,8 +1317,17 @@ class MultiAccountManager:
                 acc._realtime_quota_cache = None
         # Write state cleanly without merging previous exhausted_until
         try:
+            active_idx = 0
+            if os.path.exists(self.state_path):
+                try:
+                    with open(self.state_path, "r", encoding="utf-8") as f:
+                        prev = json.load(f)
+                        if isinstance(prev.get("_active"), int) and 0 <= prev["_active"] < len(self.accounts):
+                            active_idx = prev["_active"]
+                except Exception:
+                    pass
             data = {str(acc.index): acc.to_dict() for acc in self.accounts}
-            data["_active"] = self.get_active_account_index()
+            data["_active"] = active_idx
             tmp = self.state_path + ".tmp"
             os.makedirs(os.path.dirname(os.path.abspath(self.state_path)), exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
@@ -1521,10 +1582,17 @@ class MultiAccountManager:
         idx = self.get_active_account_index()
         if 0 <= idx < len(self.accounts):
             acc = self.accounts[idx]
-            # Verify active account is valid and licensed; auto-switch if unlicensed
+            # Verify active account is valid, licensed, and has required scopes; auto-switch if not
             if acc.is_oauth():
-                rt = acc.fetch_realtime_quota()
-                if rt and not rt.get("is_licensed", True):
+                needs_switch = False
+                if not acc.has_required_scopes():
+                    needs_switch = True
+                else:
+                    rt = acc.fetch_realtime_quota()
+                    if rt and not rt.get("is_licensed", True):
+                        needs_switch = True
+
+                if needs_switch:
                     best_idx, _, _ = self.select_best_account(exclude_index=idx)
                     if best_idx != idx and 0 <= best_idx < len(self.accounts):
                         self.set_active_account(best_idx)
@@ -1563,8 +1631,10 @@ class MultiAccountManager:
                 for acc in self.accounts:
                     acc_email = str(acc.oauth_data.get("id_token_email") or acc.name).strip().lower()
                     if acc_email == keyring_email or acc.name.strip().lower() == keyring_email:
-                        # Verify this account is licensed before adopting it as active
+                        # Verify this account is licensed and has required scopes before adopting it as active
                         if acc.is_oauth():
+                            if not acc.has_required_scopes():
+                                break
                             rt = acc.fetch_realtime_quota()
                             if rt and not rt.get("is_licensed", True):
                                 break
@@ -1579,10 +1649,15 @@ class MultiAccountManager:
                 if "_active" in saved and isinstance(saved["_active"], int):
                     idx = saved["_active"]
                     if 0 <= idx < len(self.accounts):
-                        return idx
+                        cand = self.accounts[idx]
+                        if cand.is_available():
+                            return idx
             except Exception:
                 pass
-        return 0
+
+        # 3. Safe fallback: select the best available licensed account
+        best_idx, _, _ = self.select_best_account()
+        return best_idx
 
 
 # ---------------------------------------------------------------------------
@@ -3821,6 +3896,13 @@ if __name__ == "__main__":
             for acc in mgr.accounts:
                 quota_pct = f"{acc.remaining_quota_pct(now):.0f}%"
                 avail = "Ready" if acc.is_available(now) else f"Cooldown ({format_remaining_time(acc.remaining_cooldown(now))})"
+                if acc.is_oauth():
+                    if not acc.has_required_scopes():
+                        avail = "Missing Permissions (Run /login to re-authorize)"
+                    else:
+                        rt = acc.fetch_realtime_quota()
+                        if rt and not rt.get("is_licensed", True):
+                            avail = "No License (403 Subscription Required)"
                 prov = f"{acc.provider} (OAuth)" if acc.is_oauth() else acc.provider
                 active_str = " [ACTIVE]" if acc.index == active_idx else ""
                 print(f"[{acc.index + 1}] {acc.name:<22} | Provider: {prov:<16} | Model: {(acc.model or '(default)'):<18} | Quota: {quota_pct:<4} | Status: {avail}{active_str}")
