@@ -264,6 +264,7 @@ install_epistemic_rule(global_rules)
 install_task_automation_rule(global_rules)
 " 2>/dev/null || true
     echo "    ✓ Native statusline and task automation rules installed."
+    sync 2>/dev/null || true
 fi
 
 # 8. Check PATH configuration
