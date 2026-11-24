@@ -2,7 +2,10 @@
 import os
 import tempfile
 import unittest
-import yaml
+try:
+    import yaml
+except ImportError:
+    yaml = None
 from agy_modules.infrastruktur.skills_sync import (
     normalize_skill_frontmatter,
     sync_claude_skills,
