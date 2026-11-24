@@ -48,7 +48,7 @@ if [ "$IS_PROBE" = "1" ]; then
     exit 0
 fi
 
-BASE_AGY="${BASE_AGY:-/home/julian/.local/bin/agy}"
+BASE_AGY="${BASE_AGY:-${HOME}/.local/bin/agy}"
 if [ ! -x "${BASE_AGY}" ]; then
     BASE_AGY="$(command -v agy || true)"
 fi

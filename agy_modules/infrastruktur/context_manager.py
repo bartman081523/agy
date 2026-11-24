@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 
 HISTORY_DB_PATH = os.environ.get(
     "CLAUDE_HISTORY_DB",
-    "/run/media/julian/ML4/gemini-cli/claude-history-mcp/history.db"
+    os.path.expanduser("~/.claude-history/history.db")
 )
 
 class ContextManager:

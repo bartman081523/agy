@@ -5,9 +5,13 @@ import subprocess
 from agy_modules.infrastruktur.context_manager import ContextManager
 from agy_modules.infrastruktur.audio_token_guard import AudioTokenGuard
 from agy_modules.infrastruktur.mcp_sync import sync_mcp_servers
+from agy_modules.infrastruktur.skills_sync import sync_claude_skills
 from agy_modules.infrastruktur.quota_guard import QuotaGuard, parse_reset_duration
 
 class TestInfrastrukturModule(unittest.TestCase):
+
+    def test_skills_sync_export(self):
+        self.assertTrue(callable(sync_claude_skills))
 
     def test_audio_token_guard_token_estimation(self):
         text = "Hello world! This is a test."

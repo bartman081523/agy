@@ -81,7 +81,7 @@ Data is indexed into a local SQLite database (`history.db`) with WAL mode, forei
 {
   "mcpServers": {
     "antigravity-history": {
-      "command": "/run/media/julian/ML6/agy/antigravity-history-mcp/run_server.sh"
+      "command": "/path/to/antigravity-history-mcp/run_server.sh"
     }
   }
 }
@@ -92,7 +92,7 @@ Data is indexed into a local SQLite database (`history.db`) with WAL mode, forei
 {
   "mcpServers": {
     "antigravity-history": {
-      "command": "/run/media/julian/ML6/agy/antigravity-history-mcp/run_server.sh",
+      "command": "/path/to/antigravity-history-mcp/run_server.sh",
       "transport": "stdio"
     }
   }
@@ -102,6 +102,6 @@ Data is indexed into a local SQLite database (`history.db`) with WAL mode, forei
 ## Running Tests
 
 ```bash
-cd /run/media/julian/ML6/agy/antigravity-history-mcp
+cd antigravity-history-mcp
 ./venv/bin/python3 -m unittest discover -s tests
 ```

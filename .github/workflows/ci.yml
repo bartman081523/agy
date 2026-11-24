@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'branch/**'
+  pull_request:
+
+jobs:
+  test:
+    name: Run AGY Modular Test Suites
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify launcher permissions
+        run: |
+          chmod +x bin/* install.sh tests/run_all_tests.sh
+
+      - name: Run all AGY test suites
+        run: |
+          ./tests/run_all_tests.sh

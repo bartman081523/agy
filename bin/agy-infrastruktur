@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 # AGY Infrastructure Launcher
 # Activates context management, audio token protection, and Claude Code MCP synchronization.
+# Supports Multi-Account failover, interactive /login, --compress, and --yolo.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 REPO_DIR="$(cd -P "${SCRIPT_DIR}/.." && pwd)"
 export PYTHONPATH="${REPO_DIR}:${PYTHONPATH:-}"
+
+EXEC_NAME="$(basename "$0")"
+if [ "$EXEC_NAME" = "update" ] || [ "$EXEC_NAME" = "agy-update" ] || [ "${1:-}" = "update" ] || [ "${1:-}" = "self-update" ] || [ "${1:-}" = "--self-update" ] || [ "${1:-}" = "--update" ]; then
+    shift 1 2>/dev/null || true
+    python3 "${REPO_DIR}/agy_modules/infrastruktur/updater.py" "$@"
+    exit 0
+fi
 
 export AGY_INFRASTRUCTURE="${AGY_INFRASTRUCTURE:-1}"
 
@@ -20,42 +28,181 @@ if [ "${AGY_QUOTA_GUARD:-0}" = "1" ]; then
     QUOTA_GUARD_ACTIVE=1
 fi
 
-QUOTA_ACCOUNTS=""
-QUOTA_ACCOUNTS_PENDING=0
+TUI_STATUS_ACTIVE=0
+if [ "${AGY_TUI_STATUS:-0}" = "1" ] || [ "${AGY_STATUSBAR:-0}" = "1" ]; then
+    TUI_STATUS_ACTIVE=1
+fi
 
+QUOTA_ACCOUNTS=""
 PROCESSED_ARGS=()
 IS_PROBE=0
 
-for arg in "$@"; do
-    case "$arg" in
+show_help() {
+    cat << 'EOF'
+AGY Infrastructure Launcher
+
+Usage:
+  agy-infrastruktur [OPTIONS] [AGY_OPTIONS...]
+
+Infrastructure Controls:
+  --infra, --infrastructure           Enable infrastructure module (default: on)
+  --no-infra, --no-infrastructure     Disable infrastructure module
+
+Quota Guard & Multi-Account:
+  --quota-guard, --no-quota-guard     Auto-wait & resume on Gemini 429 quota exhaustion (default: off)
+  --quota-accounts <spec>             Account pool specification (comma-separated, file, or JSON)
+  --tui-status, --status-bar          Live bottom status bar (Account, Quota %, Context fill)
+  --no-tui-status, --no-status-bar    Disable live TUI bottom status bar
+  --reset-quota, --clear-quota        Reset persisted quota cooldowns and anchors
+
+Account & Provider Management (/login):
+  --login, /login, login              Interactive menu to manage unlimited accounts and providers
+  --list-accounts                     List all configured account slots and remaining quotas
+  --add-account <spec>                Add account (format: name:provider:key[:model[:base_url]])
+  --delete-account <index>            Delete account slot by index (1-based or 0-based)
+  --provider <name>                   Set provider (google, anthropic, openai, deepseek, ollama, openrouter, custom)
+  --model <name>                      Set target model for provider
+  --install-statusline                Install native statusLine permanently into ~/.gemini/antigravity-cli/settings.json
+  --uninstall-statusline              Remove native statusLine from settings.json
+
+Context Autocompression:
+  --compress <size>                   Context autocompaction trigger (e.g. 128k, 64k, 256k, 1M, 50000)
+
+Execution Modes:
+  --yolo, -y                          Dangerously skip interactive permissions
+  --probe, --dry-run                  Probe module configuration without launching
+  --help, -h                          Show this help message
+
+Examples:
+  agy-infrastruktur --tui-status --compress 128k
+  agy-infrastruktur --login
+  agy-infrastruktur --list-accounts
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        --infra|--infrastructure)
+            export AGY_INFRASTRUCTURE=1
+            shift
+            ;;
+        --no-infra|--no-infrastructure)
+            export AGY_INFRASTRUCTURE=0
+            shift
+            ;;
         --yolo|-y)
             YOLO_ACTIVE=1
+            shift
             ;;
         --quota-guard)
             QUOTA_GUARD_ACTIVE=1
+            shift
             ;;
-        --quota-accounts)
-            QUOTA_ACCOUNTS_PENDING=1
+        --no-quota-guard)
+            QUOTA_GUARD_ACTIVE=0
+            shift
             ;;
-        --quota-accounts=*)
-            QUOTA_ACCOUNTS="${arg#*=}"
+        --tui-status|--status-bar)
+            TUI_STATUS_ACTIVE=1
+            QUOTA_GUARD_ACTIVE=1
+            shift
+            ;;
+        --no-tui-status|--no-status-bar)
+            TUI_STATUS_ACTIVE=0
+            shift
+            ;;
+        --reset-quota|--clear-quota)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --reset-quota
+            exit 0
+            ;;
+        --login|/login|login|--accounts-menu)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --login
+            exit 0
+            ;;
+        --list-accounts)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --list-accounts
+            exit 0
+            ;;
+        --add-account)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --add-account "$2"
+            exit 0
+            ;;
+        --add-account=*)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --add-account "${1#*=}"
+            exit 0
+            ;;
+        --delete-account)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --delete-account "$2"
+            exit 0
+            ;;
+        --delete-account=*)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --delete-account "${1#*=}"
+            exit 0
+            ;;
+        --install-statusline|--setup-statusline)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --install-statusline
+            exit 0
+            ;;
+        --uninstall-statusline|--remove-statusline)
+            python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --uninstall-statusline
+            exit 0
+            ;;
+        --compress)
+            export AGY_COMPRESS="$2"
+            export AGY_COMPRESS_TOKENS="$(python3 -c "from agy_modules.infrastruktur.quota_guard import parse_token_size; print(parse_token_size('$2'))")"
+            shift 2
+            ;;
+        --compress=*)
+            c_val="${1#*=}"
+            export AGY_COMPRESS="$c_val"
+            export AGY_COMPRESS_TOKENS="$(python3 -c "from agy_modules.infrastruktur.quota_guard import parse_token_size; print(parse_token_size('$c_val'))")"
+            shift
+            ;;
+        --provider)
+            export AGY_PROVIDER="$2"
+            shift 2
+            ;;
+        --provider=*)
+            export AGY_PROVIDER="${1#*=}"
+            shift
+            ;;
+        --model)
+            export AGY_MODEL="$2"
+            export MODEL="$2"
+            PROCESSED_ARGS+=("--model" "$2")
+            shift 2
+            ;;
+        --model=*)
+            m_val="${1#*=}"
+            export AGY_MODEL="$m_val"
+            export MODEL="$m_val"
+            PROCESSED_ARGS+=("--model" "$m_val")
+            shift
+            ;;
+        --quota-accounts|--accounts)
+            QUOTA_ACCOUNTS="$2"
+            shift 2
+            ;;
+        --quota-accounts=*|--accounts=*)
+            QUOTA_ACCOUNTS="${1#*=}"
+            shift
             ;;
         --dry-run|--probe)
             IS_PROBE=1
-            PROCESSED_ARGS+=("$arg")
+            PROCESSED_ARGS+=("$1")
+            shift
             ;;
         *)
-            if [ "$QUOTA_ACCOUNTS_PENDING" = "1" ]; then
-                QUOTA_ACCOUNTS="${arg}"
-                QUOTA_ACCOUNTS_PENDING=0
-            else
-                PROCESSED_ARGS+=("$arg")
-            fi
+            PROCESSED_ARGS+=("$1")
+            shift
             ;;
     esac
 done
 
-# Account failover only makes sense with the quota guard
 if [ -n "${QUOTA_ACCOUNTS}" ]; then
     QUOTA_GUARD_ACTIVE=1
 fi
@@ -64,18 +211,19 @@ if [ "$YOLO_ACTIVE" = "1" ]; then
     PROCESSED_ARGS+=("--dangerously-skip-permissions")
 fi
 
-# Sync MCP configuration if infrastructure is active
+# Sync MCP and Skills configuration if infrastructure is active
 if [ "${AGY_INFRASTRUCTURE}" = "1" ]; then
     python3 "${REPO_DIR}/agy_modules/infrastruktur/mcp_sync.py" >/dev/null 2>&1 || true
+    python3 "${REPO_DIR}/agy_modules/infrastruktur/skills_sync.py" >/dev/null 2>&1 || true
 fi
 
 # Dry-run / Probe handler for test suites
 if [ "$IS_PROBE" = "1" ]; then
-    echo "AGY-INFRASTRUCTURE: active=1 env=AGY_INFRASTRUCTURE=${AGY_INFRASTRUCTURE} yolo=${YOLO_ACTIVE} quota_guard=${QUOTA_GUARD_ACTIVE} accounts=${QUOTA_ACCOUNTS}"
+    echo "AGY-INFRASTRUCTURE: active=1 env=AGY_INFRASTRUCTURE=${AGY_INFRASTRUCTURE} yolo=${YOLO_ACTIVE} quota_guard=${QUOTA_GUARD_ACTIVE} accounts=${QUOTA_ACCOUNTS} tui_status=${TUI_STATUS_ACTIVE}"
     exit 0
 fi
 
-BASE_AGY="${BASE_AGY:-/home/julian/.local/bin/agy}"
+BASE_AGY="${BASE_AGY:-${HOME}/.local/bin/agy}"
 if [ ! -x "${BASE_AGY}" ]; then
     BASE_AGY="$(command -v agy || true)"
 fi
@@ -86,11 +234,25 @@ if [ -z "${BASE_AGY}" ] || [ ! -x "${BASE_AGY}" ]; then
 fi
 
 if [ "$QUOTA_GUARD_ACTIVE" = "1" ]; then
+    GUARD_ARGS=()
     if [ -n "${QUOTA_ACCOUNTS}" ]; then
-        exec python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" "--quota-accounts=${QUOTA_ACCOUNTS}" "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
-    else
-        exec python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+        GUARD_ARGS+=("--quota-accounts=${QUOTA_ACCOUNTS}")
     fi
+    if [ "$TUI_STATUS_ACTIVE" = "1" ]; then
+        GUARD_ARGS+=("--tui-status")
+    else
+        GUARD_ARGS+=("--no-tui-status")
+    fi
+    if [ -n "${AGY_COMPRESS:-}" ]; then
+        GUARD_ARGS+=("--compress=${AGY_COMPRESS}")
+    fi
+    exec python3 "${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" "${GUARD_ARGS[@]}" "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
 else
-    exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+    if [ "$TUI_STATUS_ACTIVE" = "1" ]; then
+        STATUS_SCRIPT="${REPO_DIR}/agy_modules/infrastruktur/quota_guard.py"
+        STATUS_JSON="{\"statusLine\": {\"command\": \"python3 ${STATUS_SCRIPT} --statusline-cmd\", \"stack_with_default\": true}}"
+        exec "${BASE_AGY}" --settings "${STATUS_JSON}" "${PROCESSED_ARGS[@]}"
+    else
+        exec "${BASE_AGY}" "${PROCESSED_ARGS[@]}"
+    fi
 fi

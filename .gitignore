@@ -4,3 +4,15 @@ __pycache__/
 .pytest_cache/
 scratches/
 *.tmp
+.agents/skills
+.agents/mcp_config.json
+.agents/skills.json
+venv/
+.venv/
+antigravity-history-mcp/venv/
+dist/
+build/
+*.egg-info/
+skills/
+
+
