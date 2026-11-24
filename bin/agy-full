@@ -22,6 +22,9 @@ if [ "$EXEC_NAME" = "update" ] || [ "$EXEC_NAME" = "agy-update" ] || [ "${1:-}" 
     exit 0
 fi
 
+# Prevent upstream agy from disabling Linux Keyring/SecretService when launched via SSH
+unset SSH_CLIENT SSH_CONNECTION SSH_TTY 2>/dev/null || true
+
 export AGY_INFRASTRUCTURE="${AGY_INFRASTRUCTURE:-1}"
 export AGY_EPISTEMIC="${AGY_EPISTEMIC:-1}"
 export AGY_SYMBOLIC="${AGY_SYMBOLIC:-1}"

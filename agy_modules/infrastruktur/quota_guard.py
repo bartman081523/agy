@@ -450,12 +450,10 @@ def get_upstream_oauth_credentials() -> tuple[str, str]:
         try:
             with open(cache_path, "r", encoding="utf-8") as cf:
                 cdata = json.load(cf)
-            c_bin = cdata.get("binary_path")
-            if c_bin and os.path.isfile(c_bin) and os.path.getmtime(c_bin) == cdata.get("mtime"):
-                cached_cid = cdata.get("client_id", "")
-                cached_sec = cdata.get("client_secret", "")
-                if cached_cid and cached_sec:
-                    return cached_cid, cached_sec
+            cached_cid = cdata.get("client_id", "")
+            cached_sec = cdata.get("client_secret", "")
+            if cached_cid and cached_sec:
+                return cached_cid, cached_sec
         except Exception:
             pass
 
@@ -469,26 +467,17 @@ def get_upstream_oauth_credentials() -> tuple[str, str]:
             try:
                 with open(b, "rb") as bf:
                     data = bf.read()
-                if not cid:
-                    m_cid = re.search(rb"(\d+-[a-z0-9]+\.apps\.googleusercontent\.com)", data)
-                    if m_cid:
-                        cid = m_cid.group(1).decode("ascii")
-                if not sec:
-                    m_sec = re.search(rb"([A-Z0-9]{6}-[A-Za-z0-9_-]{28})", data)
-                    if m_sec:
-                        sec = m_sec.group(1).decode("ascii")
+                cids = re.findall(rb"(\d+-[a-z0-9]+\.apps\.googleusercontent\.com)", data)
+                secs = re.findall(rb"(GOCSPX-[A-Za-z0-9_-]{28})", data)
+                for c in set(cids):
+                    if c.startswith(b"1071006060591"):
+                        cid = c.decode("ascii")
+                        break
+                for s in set(secs):
+                    if b"K58FWR" in s:
+                        sec = s.decode("ascii")
+                        break
                 if cid and sec:
-                    try:
-                        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-                        with open(cache_path, "w", encoding="utf-8") as cf:
-                            json.dump({
-                                "binary_path": b,
-                                "mtime": os.path.getmtime(b),
-                                "client_id": cid,
-                                "client_secret": sec,
-                            }, cf)
-                    except Exception:
-                        pass
                     break
             except Exception:
                 continue
@@ -498,6 +487,18 @@ def get_upstream_oauth_credentials() -> tuple[str, str]:
         cid = "mock-client-id.apps.googleusercontent.com"
     if not sec:
         sec = "mock-client-secret-placeholder"
+
+    try:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as cf:
+            json.dump({
+                "binary_path": os.path.expanduser("~/.local/bin/agy"),
+                "mtime": time.time(),
+                "client_id": cid,
+                "client_secret": sec,
+            }, cf)
+    except Exception:
+        pass
 
     return cid, sec
 
@@ -2952,7 +2953,11 @@ def run_tui_login_submenu(
             sys.stdout.write("\033[2J\033[H" + menu_text)
             sys.stdout.flush()
 
-            raw_b = os.read(sys.stdin.fileno(), 16)
+            try:
+                fd = sys.stdin.fileno()
+            except Exception:
+                fd = 0
+            raw_b = os.read(fd, 16)
             if not raw_b:
                 return ("cancel", None)
 
@@ -3206,6 +3211,9 @@ def run_supervised(
         def _pty_account_cmd() -> Tuple[List[str], Dict[str, str]]:
             cmd = list(argv)
             env = dict(os.environ)
+            # Remove SSH session markers so upstream agy uses Linux Keyring / SecretService
+            for k in ("SSH_CLIENT", "SSH_CONNECTION", "SSH_TTY"):
+                env.pop(k, None)
             if 0 <= account_index < len(mgr.accounts):
                 acc = mgr.accounts[account_index]
                 cmd, env = acc.apply_to_environment_and_cmd(cmd, env)
