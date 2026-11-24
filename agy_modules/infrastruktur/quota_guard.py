@@ -2809,6 +2809,24 @@ def _handle_quota_event_p(
 # Supervised Execution Loop
 # ---------------------------------------------------------------------------
 
+def _popen_with_io_retry(popen_fn: Callable[[], subprocess.Popen], max_retries: int = 3, delay: float = 0.5) -> subprocess.Popen:
+    """Spawns subprocess with retry on transient EIO (Errno 5) or ETXTBSY (Errno 26)."""
+    import errno
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            return popen_fn()
+        except OSError as e:
+            last_err = e
+            if e.errno in (getattr(errno, "EIO", 5), getattr(errno, "ETXTBSY", 26)) and attempt < max_retries - 1:
+                time.sleep(delay * (attempt + 1))
+                continue
+            raise
+    if last_err:
+        raise last_err
+    raise RuntimeError("Failed to spawn process after retries")
+
+
 def _launch_once(
     argv: List[str],
     account_index: int,
@@ -2826,14 +2844,14 @@ def _launch_once(
     elif account_prefixes and 0 <= account_index < len(account_prefixes):
         cmd.extend(resolve_cli_prefix(account_prefixes[account_index]))
 
-    proc = subprocess.Popen(
+    proc = _popen_with_io_retry(lambda: subprocess.Popen(
         cmd,
         env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-    )
+    ))
     captured = []
     quota_event = None
 
@@ -3185,7 +3203,7 @@ def run_supervised(
             if old_term_settings:
                 tty.setraw(sys.stdin.fileno())
 
-            proc = subprocess.Popen(
+            proc = _popen_with_io_retry(lambda: subprocess.Popen(
                 cmd,
                 env=child_env,
                 stdin=slave_fd,
@@ -3193,7 +3211,7 @@ def run_supervised(
                 stderr=slave_fd,
                 close_fds=True,
                 preexec_fn=os.setsid,
-            )
+            ))
             os.close(slave_fd)
             proc_start_time = time.time()
             active_log = find_latest_active_log_file()
