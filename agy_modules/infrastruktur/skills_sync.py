@@ -110,38 +110,62 @@ def sync_claude_skills(
     valid_count = 0
     errors = []
 
-    # 1. Inspect and normalize each skill
-    for item in sorted(os.listdir(claude_skills_dir)):
-        item_path = os.path.join(claude_skills_dir, item)
-        if not os.path.isdir(item_path):
-            continue
-        skill_file = os.path.join(item_path, "SKILL.md")
-        if not os.path.exists(skill_file):
-            continue
-
-        total_scanned += 1
+    # 1. Inspect and normalize each skill if directory mtime changed
+    stamp_file = os.path.join(gemini_config_dir, ".skills_sync_stamp")
+    dir_mtime = os.path.getmtime(claude_skills_dir) if os.path.exists(claude_skills_dir) else 0
+    needs_normalization = True
+    if os.path.exists(stamp_file):
         try:
-            with open(skill_file, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
+            with open(stamp_file, "r", encoding="utf-8") as sf:
+                if float(sf.read().strip()) == dir_mtime:
+                    needs_normalization = False
+        except Exception:
+            pass
 
-            normalized, modified = normalize_skill_frontmatter(content, item)
-            if modified:
-                modified_count += 1
-                if not dry_run:
-                    tmp = skill_file + ".tmp"
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        f.write(normalized)
-                    os.replace(tmp, skill_file)
+    if not needs_normalization:
+        items = [item for item in os.listdir(claude_skills_dir) if os.path.isdir(os.path.join(claude_skills_dir, item)) and os.path.exists(os.path.join(claude_skills_dir, item, "SKILL.md"))]
+        total_scanned = len(items)
+        valid_count = len(items)
+    else:
+        for item in sorted(os.listdir(claude_skills_dir)):
+            item_path = os.path.join(claude_skills_dir, item)
+            if not os.path.isdir(item_path):
+                continue
+            skill_file = os.path.join(item_path, "SKILL.md")
+            if not os.path.exists(skill_file):
+                continue
 
-            # Verification of normalized YAML
-            parts = normalized.split("---", 2)
-            parsed = yaml.safe_load(parts[1])
-            if isinstance(parsed, dict) and "name" in parsed and "description" in parsed:
-                valid_count += 1
-            else:
-                errors.append(f"{item}: frontmatter structure invalid")
-        except Exception as e:
-            errors.append(f"{item}: {str(e)}")
+            total_scanned += 1
+            try:
+                with open(skill_file, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+
+                normalized, modified = normalize_skill_frontmatter(content, item)
+                if modified:
+                    modified_count += 1
+                    if not dry_run:
+                        tmp = skill_file + ".tmp"
+                        with open(tmp, "w", encoding="utf-8") as f:
+                            f.write(normalized)
+                        os.replace(tmp, skill_file)
+
+                # Verification of normalized YAML
+                parts = normalized.split("---", 2)
+                parsed = yaml.safe_load(parts[1]) if (yaml and len(parts) > 1) else {}
+                if isinstance(parsed, dict) and "name" in parsed and "description" in parsed:
+                    valid_count += 1
+                else:
+                    errors.append(f"{item}: frontmatter structure invalid")
+            except Exception as e:
+                errors.append(f"{item}: {str(e)}")
+
+        if not dry_run:
+            try:
+                os.makedirs(gemini_config_dir, exist_ok=True)
+                with open(stamp_file, "w", encoding="utf-8") as sf:
+                    sf.write(str(dir_mtime))
+            except Exception:
+                pass
 
     # 2. Ensure global Antigravity linkage
     global_skills_link = os.path.join(gemini_config_dir, "skills")

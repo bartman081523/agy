@@ -97,15 +97,34 @@ echo "    ✓ git, python3, curl found."
 
 # 2. Check or install upstream Antigravity CLI
 echo "${CYAN}--> Checking upstream Antigravity CLI (agy)...${RESET}"
-if command -v agy >/dev/null 2>&1 || [ -x "${HOME}/.local/bin/agy" ]; then
-    echo "    ✓ Upstream agy binary detected."
+agy_is_working() {
+    if command -v agy >/dev/null 2>&1 && agy --version >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ -x "${HOME}/.local/bin/agy" ] && "${HOME}/.local/bin/agy" --version >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+if agy_is_working; then
+    echo "    ✓ Upstream agy binary detected and functioning."
 else
-    echo "${YELLOW}    Upstream agy binary not detected in PATH.${RESET}"
+    echo "${YELLOW}    Upstream agy binary not detected or corrupted in PATH.${RESET}"
     if [ "$DRY_RUN" = "0" ]; then
+        if [ -f "${HOME}/.local/bin/agy" ] && ! "${HOME}/.local/bin/agy" --version >/dev/null 2>&1; then
+            echo "${YELLOW}    Removing corrupted/truncated binary at ${HOME}/.local/bin/agy...${RESET}"
+            rm -f "${HOME}/.local/bin/agy"
+        fi
         echo "    Installing upstream Antigravity CLI via official installer..."
         curl -fsSL https://antigravity.google/cli/install.sh | bash || {
-            echo "${YELLOW}    Notice: Official installer unavailable or failed; continuing with mod wrappers.${RESET}"
+            echo "${YELLOW}    Notice: Official installer exited with code; verifying result...${RESET}"
         }
+        if agy_is_working; then
+            echo "    ✓ Upstream agy binary successfully installed."
+        else
+            echo "${YELLOW}    Notice: Upstream agy binary not ready yet; continuing setup.${RESET}"
+        fi
     fi
 fi
 

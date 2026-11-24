@@ -445,6 +445,20 @@ def get_upstream_oauth_credentials() -> tuple[str, str]:
     if cid and sec:
         return cid, sec
 
+    cache_path = os.path.expanduser("~/.gemini/antigravity-cli/.oauth_credentials_cache.json")
+    if os.path.isfile(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as cf:
+                cdata = json.load(cf)
+            c_bin = cdata.get("binary_path")
+            if c_bin and os.path.isfile(c_bin) and os.path.getmtime(c_bin) == cdata.get("mtime"):
+                cached_cid = cdata.get("client_id", "")
+                cached_sec = cdata.get("client_secret", "")
+                if cached_cid and cached_sec:
+                    return cached_cid, cached_sec
+        except Exception:
+            pass
+
     bin_candidates = [
         os.path.expanduser("~/.local/bin/agy"),
         shutil.which("agy") or "",
@@ -464,6 +478,17 @@ def get_upstream_oauth_credentials() -> tuple[str, str]:
                     if m_sec:
                         sec = m_sec.group(1).decode("ascii")
                 if cid and sec:
+                    try:
+                        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                        with open(cache_path, "w", encoding="utf-8") as cf:
+                            json.dump({
+                                "binary_path": b,
+                                "mtime": os.path.getmtime(b),
+                                "client_id": cid,
+                                "client_secret": sec,
+                            }, cf)
+                    except Exception:
+                        pass
                     break
             except Exception:
                 continue
