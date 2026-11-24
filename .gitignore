@@ -14,5 +14,9 @@ dist/
 build/
 *.egg-info/
 skills/
+accounts.json
+account_quotas.json
+credentials*
+*.jsonl
 
 
