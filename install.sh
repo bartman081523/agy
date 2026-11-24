@@ -251,11 +251,19 @@ if [ "$INSTALL_SKILLS" = "1" ]; then
     fi
 fi
 
-# 7. Configure Native StatusLine
-echo "${CYAN}--> Configuring native StatusLine in settings.json...${RESET}"
+# 7. Configure Native StatusLine and Task Rules
+echo "${CYAN}--> Configuring native StatusLine and global task rules...${RESET}"
 if [ "$DRY_RUN" = "0" ]; then
     python3 "${TARGET_REPO_DIR}/agy_modules/infrastruktur/quota_guard.py" --setup-statusline 2>/dev/null || true
-    echo "    ✓ Native statusline installed."
+    python3 -c "
+import sys, os
+sys.path.insert(0, '${TARGET_REPO_DIR}')
+from agy_modules.epistemic import install_epistemic_rule, install_task_automation_rule
+global_rules = os.path.expanduser('~/.gemini/config/rules')
+install_epistemic_rule(global_rules)
+install_task_automation_rule(global_rules)
+" 2>/dev/null || true
+    echo "    ✓ Native statusline and task automation rules installed."
 fi
 
 # 8. Check PATH configuration

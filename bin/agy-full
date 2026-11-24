@@ -329,8 +329,9 @@ if '${AGY_INFRASTRUCTURE}' == '1':
 for t in set(targets):
     os.makedirs(t, exist_ok=True)
     if '${AGY_EPISTEMIC}' == '1':
-        from agy_modules.epistemic import install_epistemic_rule
+        from agy_modules.epistemic import install_epistemic_rule, install_task_automation_rule
         install_epistemic_rule(t)
+        install_task_automation_rule(t)
     if '${AGY_SYMBOLIC}' == '1':
         from agy_modules.symbolic import install_symbolic_rule
         install_symbolic_rule(t)
