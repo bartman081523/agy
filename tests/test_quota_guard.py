@@ -1455,6 +1455,47 @@ class TestQuotaGuard(unittest.TestCase):
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    def test_strip_media_from_payload_omits_large_binary(self):
+        from agy_modules.infrastruktur.quota_guard import strip_media_from_payload, encode_varint
+        # Build mock protobuf: Field 140 (wt=2) -> Subfield 2 (wt=2) -> Field 4 (wt=2, 600KB dummy data)
+        dummy_media = b"X" * 600_000
+        field4 = bytearray()
+        field4.extend(encode_varint((4 << 3) | 2))
+        field4.extend(encode_varint(len(dummy_media)))
+        field4.extend(dummy_media)
+
+        # Field 1 (text header)
+        text_data = b"Showing binary file"
+        field1 = bytearray()
+        field1.extend(encode_varint((1 << 3) | 2))
+        field1.extend(encode_varint(len(text_data)))
+        field1.extend(text_data)
+
+        sub2_inner = field1 + field4
+        sub2 = bytearray()
+        sub2.extend(encode_varint((2 << 3) | 2))
+        sub2.extend(encode_varint(len(sub2_inner)))
+        sub2.extend(sub2_inner)
+
+        top_f140 = bytearray()
+        top_f140.extend(encode_varint((140 << 3) | 2))
+        top_f140.extend(encode_varint(len(sub2)))
+        top_f140.extend(sub2)
+
+        # Top message with step_type=132 (Field 1) and Field 140
+        top_msg = bytearray()
+        top_msg.extend(encode_varint((1 << 3) | 0))
+        top_msg.extend(encode_varint(132))
+        top_msg.extend(top_f140)
+
+        raw_blob = bytes(top_msg)
+        self.assertGreater(len(raw_blob), 600_000)
+
+        sanitized = strip_media_from_payload(raw_blob, max_media_bytes=500_000)
+        self.assertLess(len(sanitized), 1000)
+        self.assertIn(b"Showing binary file", sanitized)
+        self.assertNotIn(b"XXXX", sanitized)
+
     def test_remaining_quota_pct_expired_cooldown_returns_100(self):
         acc = AccountProfile(index=0, name="Slot1")
         now = time.time()
