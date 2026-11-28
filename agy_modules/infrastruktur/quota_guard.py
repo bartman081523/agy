@@ -2447,6 +2447,174 @@ def resolve_cli_continue_args(
 # Conversation Compactor (Prunes historical steps while preserving checkpoints)
 # ---------------------------------------------------------------------------
 
+def decode_varint(data: bytes, offset: int) -> Tuple[int, int]:
+    """Decode a protobuf varint from data starting at offset."""
+    res = 0
+    shift = 0
+    while True:
+        b = data[offset]
+        offset += 1
+        res |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            break
+        shift += 7
+    return res, offset
+
+
+def encode_varint(val: int) -> bytes:
+    """Encode an integer as a protobuf varint."""
+    res = bytearray()
+    while True:
+        b = val & 0x7F
+        val >>= 7
+        if val:
+            res.append(b | 0x80)
+        else:
+            res.append(b)
+            break
+    return bytes(res)
+
+
+def strip_media_from_payload(blob: bytes, max_media_bytes: int = 500_000) -> bytes:
+    """Strip giant media attachments (e.g. raw MP4/binary files) from protobuf step_payload to prevent OOM."""
+    if not isinstance(blob, (bytes, bytearray)) or len(blob) <= max_media_bytes:
+        return blob
+    try:
+        offset = 0
+        top_fields = []
+        has_large_field = False
+        while offset < len(blob):
+            key, offset = decode_varint(blob, offset)
+            fn = key >> 3
+            wt = key & 0x7
+            if wt == 0:
+                val, offset = decode_varint(blob, offset)
+                top_fields.append((fn, wt, val))
+            elif wt == 1:
+                val = blob[offset:offset+8]
+                offset += 8
+                top_fields.append((fn, wt, val))
+            elif wt == 2:
+                ln, offset = decode_varint(blob, offset)
+                val = blob[offset:offset+ln]
+                offset += ln
+                top_fields.append((fn, wt, val))
+            elif wt == 5:
+                val = blob[offset:offset+4]
+                offset += 4
+                top_fields.append((fn, wt, val))
+            else:
+                return blob
+
+        new_top_fields = []
+        for fn, wt, val in top_fields:
+            if fn == 140 and wt == 2 and len(val) > max_media_bytes:
+                sub_off = 0
+                sub_fields = []
+                while sub_off < len(val):
+                    skey, sub_off = decode_varint(val, sub_off)
+                    sfn = skey >> 3
+                    swt = skey & 0x7
+                    if swt == 2:
+                        sln, sub_off = decode_varint(val, sub_off)
+                        sval = val[sub_off:sub_off+sln]
+                        sub_off += sln
+                        sub_fields.append((sfn, swt, sval))
+                    elif swt == 0:
+                        sval, sub_off = decode_varint(val, sub_off)
+                        sub_fields.append((sfn, swt, sval))
+                    elif swt == 1:
+                        sval = val[sub_off:sub_off+8]
+                        sub_off += 8
+                        sub_fields.append((sfn, swt, sval))
+                    elif swt == 5:
+                        sval = val[sub_off:sub_off+4]
+                        sub_off += 4
+                        sub_fields.append((sfn, swt, sval))
+                    else:
+                        break
+
+                new_sub_fields = []
+                for sfn, swt, sval in sub_fields:
+                    if sfn == 2 and swt == 2 and len(sval) > max_media_bytes:
+                        in_off = 0
+                        in_fields = []
+                        while in_off < len(sval):
+                            ikey, in_off = decode_varint(sval, in_off)
+                            ifn = ikey >> 3
+                            iwt = ikey & 0x7
+                            if iwt == 2:
+                                iln, in_off = decode_varint(sval, in_off)
+                                ival = sval[in_off:in_off+iln]
+                                in_off += iln
+                                in_fields.append((ifn, iwt, ival))
+                            elif iwt == 0:
+                                ival, in_off = decode_varint(sval, in_off)
+                                in_fields.append((ifn, iwt, ival))
+                            elif iwt == 1:
+                                ival = sval[in_off:in_off+8]
+                                in_off += 8
+                                in_fields.append((ifn, iwt, ival))
+                            elif iwt == 5:
+                                ival = sval[in_off:in_off+4]
+                                in_off += 4
+                                in_fields.append((ifn, iwt, ival))
+                            else:
+                                break
+
+                        new_in_fields = []
+                        for ifn, iwt, ival in in_fields:
+                            if ifn == 4 and iwt == 2 and len(ival) > max_media_bytes:
+                                has_large_field = True
+                                continue
+                            new_in_fields.append((ifn, iwt, ival))
+
+                        rebuilt_in = bytearray()
+                        for ifn, iwt, ival in new_in_fields:
+                            rebuilt_in.extend(encode_varint((ifn << 3) | iwt))
+                            if iwt == 2:
+                                rebuilt_in.extend(encode_varint(len(ival)))
+                                rebuilt_in.extend(ival)
+                            elif iwt == 0:
+                                rebuilt_in.extend(encode_varint(ival))
+                            else:
+                                rebuilt_in.extend(ival)
+                        new_sub_fields.append((sfn, swt, bytes(rebuilt_in)))
+                    else:
+                        new_sub_fields.append((sfn, swt, sval))
+
+                rebuilt_f140 = bytearray()
+                for sfn, swt, sval in new_sub_fields:
+                    rebuilt_f140.extend(encode_varint((sfn << 3) | swt))
+                    if swt == 2:
+                        rebuilt_f140.extend(encode_varint(len(sval)))
+                        rebuilt_f140.extend(sval)
+                    elif swt == 0:
+                        rebuilt_f140.extend(encode_varint(sval))
+                    else:
+                        rebuilt_f140.extend(sval)
+                new_top_fields.append((fn, wt, bytes(rebuilt_f140)))
+            else:
+                new_top_fields.append((fn, wt, val))
+
+        if not has_large_field:
+            return blob
+
+        rebuilt_top = bytearray()
+        for fn, wt, val in new_top_fields:
+            rebuilt_top.extend(encode_varint((fn << 3) | wt))
+            if wt == 2:
+                rebuilt_top.extend(encode_varint(len(val)))
+                rebuilt_top.extend(val)
+            elif wt == 0:
+                rebuilt_top.extend(encode_varint(val))
+            else:
+                rebuilt_top.extend(val)
+        return bytes(rebuilt_top)
+    except Exception:
+        return blob
+
+
 def compact_conversation(
     conversation_id: str,
     keep_steps: int = 150,
@@ -2460,10 +2628,11 @@ def compact_conversation(
     2. Checkpoints WAL and creates a timestamped backup copy <cid>.db.bak_<timestamp> if backup=True.
     3. Finds the latest checkpoint step (step_type=23) in the steps table.
     4. Preserves step 0 and all steps from the latest checkpoint onward (or last keep_steps).
-    5. Renumbers steps consecutively (0, 1, 2, ... N-1) to ensure upstream agy can load them seamlessly.
-    6. Synchronizes and renumbers gen_metadata and executor_metadata to match.
-    7. Executes VACUUM on the database to reclaim disk space.
-    8. Updates step_count in conversation_summaries.db (conversation_summaries table and conversations_fts where chunk_index = -1).
+    5. Strips giant binary media attachments (>500KB) from step_payload to protect low-RAM systems from OOM.
+    6. Renumbers steps consecutively (0, 1, 2, ... N-1) to ensure upstream agy can load them seamlessly.
+    7. Synchronizes and renumbers gen_metadata and executor_metadata to match.
+    8. Executes VACUUM on the database to reclaim disk space.
+    9. Updates step_count in conversation_summaries.db.
     """
     import sqlite3
     import shutil
@@ -2521,7 +2690,16 @@ def compact_conversation(
         cur.execute("SELECT * FROM steps WHERE idx = 0 OR idx >= ? ORDER BY idx ASC", (cutoff,))
         raw_steps = [list(r) for r in cur.fetchall()]
 
-        if len(raw_steps) >= total_steps:
+        # Strip any giant media payloads in preserved steps
+        any_media_stripped = False
+        for row in raw_steps:
+            if len(row) > 9 and isinstance(row[9], (bytes, bytearray)) and len(row[9]) > 500_000:
+                sanitized_blob = strip_media_from_payload(row[9])
+                if len(sanitized_blob) < len(row[9]):
+                    row[9] = sanitized_blob
+                    any_media_stripped = True
+
+        if len(raw_steps) >= total_steps and not any_media_stripped:
             conn.close()
             if backup_path and os.path.exists(backup_path):
                 try:
